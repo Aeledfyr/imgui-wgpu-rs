@@ -19,7 +19,7 @@ default = []
 wgpu = "0.5"
 glsl-to-spirv = { version = "0.1", optional = true }
 log = "0.4"
-imgui = "0.3"
+imgui = { version = "0.4.0-pre", git = "https://github.com/jaynus/imgui-rs", rev = "fd3caf3e5b1141e8af3725f8c6898524c14426b0" }
 
 [dev-dependencies]
 winit = "0.21"
@@ -27,11 +27,7 @@ raw-window-handle = "0.3"
 env_logger = "0.5"
 image = "0.22"
 futures = "0.3"
-
-[dev-dependencies.imgui-winit-support]
-version = "0.3"
-default-features = false
-features = ["winit-20"]
+imgui-winit-support = { version = "0.4.0-pre", git = "https://github.com/jaynus/imgui-rs", rev = "fd3caf3e5b1141e8af3725f8c6898524c14426b0" }
 
 [package.metadata.docs.rs]
 all-features = true
