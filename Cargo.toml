@@ -31,6 +31,3 @@ imgui-winit-support = { version = "0.4.0-pre", git = "https://github.com/jaynus/
 
 [package.metadata.docs.rs]
 all-features = true
-
-# [patch.crates-io]
-# wgpu = { version = "0.4", git = "https://github.com/gfx-rs/wgpu-rs.git", rev = "7b15e24" }
