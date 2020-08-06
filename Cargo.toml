@@ -1,6 +1,6 @@
 [package]
 name = "imgui-wgpu"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["Noah Hüsser <yatekii@yatekii.ch>", "Steven Wittens <steven@acko.net>"]
 edition = "2018"
 description = "A wgpu render backend for imgui-rs."
@@ -19,15 +19,19 @@ default = []
 wgpu = "0.5"
 glsl-to-spirv = { version = "0.1", optional = true }
 log = "0.4"
-imgui = { version = "0.4.0-pre", git = "https://github.com/jaynus/imgui-rs", rev = "fd3caf3e5b1141e8af3725f8c6898524c14426b0" }
+imgui = "0.4"
 
 [dev-dependencies]
-winit = "0.21"
+winit = "0.22"
 raw-window-handle = "0.3"
-env_logger = "0.5"
-image = "0.22"
+env_logger = "0.7"
+image = "0.23"
 futures = "0.3"
-imgui-winit-support = { version = "0.4.0-pre", git = "https://github.com/jaynus/imgui-rs", rev = "fd3caf3e5b1141e8af3725f8c6898524c14426b0" }
+
+[dev-dependencies.imgui-winit-support]
+version = "0.4"
+default-features = false
+features = ["winit-22"]
 
 [package.metadata.docs.rs]
 all-features = true
