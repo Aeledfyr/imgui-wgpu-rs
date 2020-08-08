@@ -16,7 +16,7 @@ license = "MIT OR Apache-2.0"
 default = []
 
 [dependencies]
-wgpu = "0.5"
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 glsl-to-spirv = { version = "0.1", optional = true }
 log = "0.4"
 imgui = "0.4"
