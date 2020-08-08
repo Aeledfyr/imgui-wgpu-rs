@@ -97,6 +97,7 @@ fn main() {
         &mut queue,
         sc_desc.format,
         Some(clear_color),
+        1,
     );
 
     let mut last_frame = Instant::now();

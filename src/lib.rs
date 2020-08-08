@@ -107,11 +107,12 @@ impl Renderer {
         queue: &Queue,
         format: TextureFormat,
         clear_color: Option<Color>,
+        sample_count: u32,
     ) -> Renderer {
         let (vs_code, fs_code) = Shaders::get_program_code();
         let vs_raw = Shaders::compile_glsl(vs_code, ShaderStage::Vertex);
         let fs_raw = Shaders::compile_glsl(fs_code, ShaderStage::Fragment);
-        Self::new_impl(imgui, device, queue, format, clear_color, vs_raw, fs_raw)
+        Self::new_impl(imgui, device, queue, format, clear_color, vs_raw, fs_raw, sample_count)
     }
 
     /// Create a new imgui wgpu renderer, using prebuilt spirv shaders.
@@ -121,6 +122,7 @@ impl Renderer {
         queue: &Queue,
         format: TextureFormat,
         clear_color: Option<Color>,
+        sample_count: u32,
     ) -> Renderer {
         let vs_bytes = include_bytes!("imgui.vert.spv");
         let fs_bytes = include_bytes!("imgui.frag.spv");
@@ -143,6 +145,7 @@ impl Renderer {
             clear_color,
             compile(vs_bytes),
             compile(fs_bytes),
+            sample_count,
         )
     }
 
@@ -153,8 +156,9 @@ impl Renderer {
         queue: &Queue,
         format: TextureFormat,
         clear_color: Option<Color>,
+        sample_count: u32,
     ) -> Renderer {
-        Renderer::new(imgui, device, queue, format, clear_color)
+        Renderer::new(imgui, device, queue, format, clear_color, sample_count)
     }
 
     /// Create an entirely new imgui wgpu renderer.
@@ -166,6 +170,7 @@ impl Renderer {
         clear_color: Option<Color>,
         vs_raw: Vec<u32>,
         fs_raw: Vec<u32>,
+        sample_count: u32,
     ) -> Renderer {
         // Load shaders.
         let vs_module = device.create_shader_module(&vs_raw);
@@ -286,7 +291,7 @@ impl Renderer {
                     ],
                 }],
             },
-            sample_count: 1,
+            sample_count,
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         });
@@ -308,13 +313,11 @@ impl Renderer {
         renderer
     }
 
-    /// Render the current imgui frame.
-    pub fn render<'r>(
-        &'r mut self,
-        draw_data: &DrawData,
+    pub fn prepare(
+        &mut self,
         device: &Device,
-        encoder: &'r mut CommandEncoder,
-        view: &TextureView,
+        draw_data: &DrawData,
+        encoder: &mut CommandEncoder,
     ) -> RendererResult<()> {
         let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
         let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
@@ -343,6 +346,37 @@ impl Renderer {
         ];
         self.update_uniform_buffer(device, encoder, &matrix);
 
+        self.vertex_buffers.clear();
+        self.index_buffers.clear();
+
+        for draw_list in draw_data.draw_lists() {
+            self.vertex_buffers
+                .push(self.upload_vertex_buffer(device, draw_list.vtx_buffer()));
+            self.index_buffers
+                .push(self.upload_index_buffer(device, draw_list.idx_buffer()));
+        }
+
+        Ok(())
+    }
+
+    /// Render the current imgui frame.
+    pub fn render<'r>(
+        &'r mut self,
+        draw_data: &DrawData,
+        device: &Device,
+        encoder: &'r mut CommandEncoder,
+        view: &TextureView,
+    ) -> RendererResult<()> {
+        let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
+        let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
+
+        // If the render area is <= 0, exit here and now.
+        if !(fb_width > 0.0 && fb_height > 0.0) {
+            return Ok(());
+        }
+
+        self.prepare(device, draw_data, encoder)?;
+
         // Start a new renderpass and prepare it properly.
         let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
             color_attachments: &[RenderPassColorAttachmentDescriptor {
@@ -365,20 +399,41 @@ impl Renderer {
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
 
-        self.vertex_buffers.clear();
-        self.index_buffers.clear();
-
-        for draw_list in draw_data.draw_lists() {
-            self.vertex_buffers
-                .push(self.upload_vertex_buffer(device, draw_list.vtx_buffer()));
-            self.index_buffers
-                .push(self.upload_index_buffer(device, draw_list.idx_buffer()));
-        }
-
         // Execute all the imgui render work.
         for (draw_list_buffers_index, draw_list) in draw_data.draw_lists().enumerate() {
             self.render_draw_list(
                 &mut rpass,
+                &draw_list,
+                draw_data.display_pos,
+                draw_data.framebuffer_scale,
+                draw_list_buffers_index,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Render the current imgui frame.
+    pub fn render_to_pass<'r>(
+        &'r mut self,
+        draw_data: &DrawData,
+        rpass: &mut RenderPass<'r>,
+    ) -> RendererResult<()> {
+        let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
+        let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
+
+        // If the render area is <= 0, exit here and now.
+        if !(fb_width > 0.0 && fb_height > 0.0) {
+            return Ok(());
+        }
+
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
+
+        // Execute all the imgui render work.
+        for (draw_list_buffers_index, draw_list) in draw_data.draw_lists().enumerate() {
+            self.render_draw_list(
+                &mut *rpass,
                 &draw_list,
                 draw_data.display_pos,
                 draw_data.framebuffer_scale,
