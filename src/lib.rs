@@ -121,6 +121,7 @@ impl Renderer {
         device: &Device,
         queue: &Queue,
         format: TextureFormat,
+        depth_format: Option<TextureFormat>,
         clear_color: Option<Color>,
         sample_count: u32,
     ) -> Renderer {
@@ -142,6 +143,7 @@ impl Renderer {
             device,
             queue,
             format,
+            depth_format,
             clear_color,
             compile(vs_bytes),
             compile(fs_bytes),
@@ -155,10 +157,11 @@ impl Renderer {
         device: &Device,
         queue: &Queue,
         format: TextureFormat,
+        depth_format: Option<TextureFormat>,
         clear_color: Option<Color>,
         sample_count: u32,
     ) -> Renderer {
-        Renderer::new(imgui, device, queue, format, clear_color, sample_count)
+        Renderer::new(imgui, device, queue, format, depth_format, clear_color, sample_count)
     }
 
     /// Create an entirely new imgui wgpu renderer.
@@ -167,6 +170,7 @@ impl Renderer {
         device: &Device,
         queue: &Queue,
         format: TextureFormat,
+        depth_format: Option<TextureFormat>,
         clear_color: Option<Color>,
         vs_raw: Vec<u32>,
         fs_raw: Vec<u32>,
@@ -266,7 +270,17 @@ impl Renderer {
                 },
                 write_mask: ColorWrite::ALL,
             }],
-            depth_stencil_state: None,
+            depth_stencil_state: depth_format.map(|format| {
+                wgpu::DepthStencilStateDescriptor {
+                    format,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                    stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                    stencil_read_mask: 0,
+                    stencil_write_mask: 0,
+                }
+            }),
             vertex_state: VertexStateDescriptor {
                 index_format: IndexFormat::Uint16,
                 vertex_buffers: &[VertexBufferDescriptor {
