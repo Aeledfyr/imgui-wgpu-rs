@@ -2,8 +2,8 @@ use imgui::{
     Context, DrawCmd::Elements, DrawData, DrawIdx, DrawList, DrawVert, TextureId, Textures,
 };
 use std::mem::size_of;
-use wgpu::*;
 use wgpu::util::DeviceExt;
+use wgpu::*;
 
 pub type RendererResult<T> = Result<T, RendererError>;
 
@@ -48,7 +48,7 @@ impl Texture {
     /// Creates a new imgui texture from a wgpu texture.
     pub fn new(texture: wgpu::Texture, layout: &BindGroupLayout, device: &Device) -> Self {
         // Extract the texture view.
-        let view = texture.create_default_view();
+        let view = texture.create_view(&Default::default());
 
         // Create the texture sampler.
         let sampler = device.create_sampler(&SamplerDescriptor {
@@ -69,7 +69,7 @@ impl Texture {
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout,
-            entries: [
+            entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: BindingResource::TextureView(&view),
@@ -78,7 +78,7 @@ impl Texture {
                     binding: 1,
                     resource: BindingResource::Sampler(&sampler),
                 },
-            ][..].into(),
+            ],
         });
 
         Texture { bind_group }
@@ -124,15 +124,7 @@ impl Renderer {
         let vs_raw = include_spirv!("imgui.vert.spv");
         let fs_raw = include_spirv!("imgui.frag.spv");
 
-        Self::new_impl(
-            imgui,
-            device,
-            queue,
-            format,
-            clear_color,
-            vs_raw,
-            fs_raw,
-        )
+        Self::new_impl(imgui, device, queue, format, clear_color, vs_raw, fs_raw)
     }
 
     #[deprecated(note = "Renderer::new now uses static shaders by default")]
@@ -172,35 +164,31 @@ impl Renderer {
         // Create the uniform matrix buffer bind group layout.
         let uniform_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
-            entries: [
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: BindingType::UniformBuffer {
-                        dynamic: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }
-            ][..].into(),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: BindingType::UniformBuffer {
+                    dynamic: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
         });
 
         // Create the uniform matrix buffer bind group.
         let uniform_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &uniform_layout,
-            entries: [
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Buffer(uniform_buffer.slice(..)),
-                }
-            ][..].into(),
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(uniform_buffer.slice(..)),
+            }],
         });
 
         // Create the texture layout for further usage.
         let texture_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
-            entries: [
+            entries: &[
                 BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
@@ -217,18 +205,20 @@ impl Renderer {
                     ty: BindingType::Sampler { comparison: false },
                     count: None,
                 },
-            ][..].into(),
+            ],
         });
 
         // Create the render pipeline layout.
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            bind_group_layouts: [&uniform_layout, &texture_layout][..].into(),
-            push_constant_ranges: [][..].into()
+            bind_group_layouts: &[&uniform_layout, &texture_layout],
+            push_constant_ranges: &[],
+            label: None,
         });
 
         // Create the render pipeline.
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            layout: &pipeline_layout,
+            label: None,
+            layout: Some(&pipeline_layout),
             vertex_stage: ProgrammableStageDescriptor {
                 module: &vs_module,
                 entry_point: "main".into(),
@@ -246,7 +236,7 @@ impl Renderer {
                 clamp_depth: false,
             }),
             primitive_topology: PrimitiveTopology::TriangleList,
-            color_states: [ColorStateDescriptor {
+            color_states: &[ColorStateDescriptor {
                 format,
                 color_blend: BlendDescriptor {
                     src_factor: BlendFactor::SrcAlpha,
@@ -259,14 +249,14 @@ impl Renderer {
                     operation: BlendOperation::Add,
                 },
                 write_mask: ColorWrite::ALL,
-            }][..].into(),
+            }],
             depth_stencil_state: None,
             vertex_state: VertexStateDescriptor {
                 index_format: IndexFormat::Uint16,
-                vertex_buffers: [VertexBufferDescriptor {
+                vertex_buffers: &[VertexBufferDescriptor {
                     stride: size_of::<DrawVert>() as BufferAddress,
                     step_mode: InputStepMode::Vertex,
-                    attributes: [
+                    attributes: &[
                         VertexAttributeDescriptor {
                             format: VertexFormat::Float2,
                             shader_location: 0,
@@ -282,8 +272,8 @@ impl Renderer {
                             shader_location: 2,
                             offset: 16,
                         },
-                    ][..].into(),
-                }][..].into(),
+                    ],
+                }],
             },
             sample_count: 1,
             sample_mask: !0,
@@ -345,7 +335,7 @@ impl Renderer {
 
         // Start a new renderpass and prepare it properly.
         let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
-            color_attachments: [RenderPassColorAttachmentDescriptor {
+            color_attachments: &[RenderPassColorAttachmentDescriptor {
                 attachment: &view,
                 resolve_target: None,
                 ops: Operations {
@@ -355,7 +345,7 @@ impl Renderer {
                     },
                     store: true,
                 },
-            }][..].into(),
+            }],
             depth_stencil_attachment: None,
         });
         rpass.set_pipeline(&self.pipeline);
@@ -442,11 +432,7 @@ impl Renderer {
     }
 
     /// Updates the current uniform buffer containing the transform matrix.
-    fn update_uniform_buffer(
-        &mut self,
-        queue: &Queue,
-        matrix: &[[f32; 4]; 4],
-    ) {
+    fn update_uniform_buffer(&mut self, queue: &Queue, matrix: &[[f32; 4]; 4]) {
         let data = as_byte_slice(matrix);
         queue.write_buffer(&self.uniform_buffer, 0, data);
     }
