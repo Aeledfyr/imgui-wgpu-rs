@@ -62,7 +62,7 @@ impl Texture {
             lod_max_clamp: 100.0,
             anisotropy_clamp: None,
             compare: None,
-            label: Some("imgui sampler".into()),
+            label: Some("imgui sampler"),
         });
 
         // Create the texture bind group from the layout.
@@ -103,50 +103,67 @@ impl Renderer {
     pub fn new_glsl(
         imgui: &mut Context,
         device: &Device,
-        queue: &mut Queue,
+        queue: &Queue,
         format: TextureFormat,
         clear_color: Option<Color>,
+        sample_count: u32,
     ) -> Renderer {
         let (vs_code, fs_code) = Shaders::get_program_code();
         let vs_raw = Shaders::compile_glsl(vs_code, ShaderStage::Vertex);
         let fs_raw = Shaders::compile_glsl(fs_code, ShaderStage::Fragment);
-        Self::new_impl(imgui, device, queue, format, clear_color, vs_raw, fs_raw)
+        Self::new_impl(imgui, device, queue, format, clear_color, vs_raw, fs_raw, sample_count)
     }
 
     /// Create a new imgui wgpu renderer, using prebuilt spirv shaders.
     pub fn new(
         imgui: &mut Context,
         device: &Device,
-        queue: &mut Queue,
+        queue: &Queue,
         format: TextureFormat,
+        depth_format: Option<TextureFormat>,
         clear_color: Option<Color>,
+        sample_count: u32,
     ) -> Renderer {
         let vs_raw = include_spirv!("imgui.vert.spv");
         let fs_raw = include_spirv!("imgui.frag.spv");
 
-        Self::new_impl(imgui, device, queue, format, clear_color, vs_raw, fs_raw)
+        Self::new_impl(
+            imgui,
+            device,
+            queue,
+            format,
+            depth_format,
+            clear_color,
+            vs_raw,
+            fs_raw,
+            sample_count,
+        )
     }
 
     #[deprecated(note = "Renderer::new now uses static shaders by default")]
     pub fn new_static(
         imgui: &mut Context,
         device: &Device,
-        queue: &mut Queue,
+        queue: &Queue,
         format: TextureFormat,
+        depth_format: Option<TextureFormat>,
         clear_color: Option<Color>,
+        sample_count: u32,
     ) -> Renderer {
-        Renderer::new(imgui, device, queue, format, clear_color)
+        Renderer::new(imgui, device, queue, format, depth_format, clear_color, sample_count)
     }
 
     /// Create an entirely new imgui wgpu renderer.
     fn new_impl(
         imgui: &mut Context,
         device: &Device,
-        queue: &mut Queue,
+        queue: &Queue,
         format: TextureFormat,
+        depth_format: Option<TextureFormat>,
         clear_color: Option<Color>,
         vs_raw: ShaderModuleSource,
         fs_raw: ShaderModuleSource,
+        sample_count: u32,
     ) -> Renderer {
         // Load shaders.
         let vs_module = device.create_shader_module(vs_raw);
@@ -221,11 +238,11 @@ impl Renderer {
             layout: Some(&pipeline_layout),
             vertex_stage: ProgrammableStageDescriptor {
                 module: &vs_module,
-                entry_point: "main".into(),
+                entry_point: "main",
             },
             fragment_stage: Some(ProgrammableStageDescriptor {
                 module: &fs_module,
-                entry_point: "main".into(),
+                entry_point: "main",
             }),
             rasterization_state: Some(RasterizationStateDescriptor {
                 front_face: FrontFace::Cw,
@@ -250,7 +267,14 @@ impl Renderer {
                 },
                 write_mask: ColorWrite::ALL,
             }],
-            depth_stencil_state: None,
+            depth_stencil_state: depth_format.map(|format| {
+                wgpu::DepthStencilStateDescriptor {
+                    format,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: Default::default(),
+                }
+            }),
             vertex_state: VertexStateDescriptor {
                 index_format: IndexFormat::Uint16,
                 vertex_buffers: &[VertexBufferDescriptor {
@@ -275,7 +299,7 @@ impl Renderer {
                     ],
                 }],
             },
-            sample_count: 1,
+            sample_count,
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         });
@@ -297,14 +321,11 @@ impl Renderer {
         renderer
     }
 
-    /// Render the current imgui frame.
-    pub fn render<'r>(
-        &'r mut self,
-        draw_data: &DrawData,
+    pub fn prepare(
+        &mut self,
         device: &Device,
         queue: &Queue,
-        encoder: &'r mut CommandEncoder,
-        view: &TextureView,
+        draw_data: &DrawData,
     ) -> RendererResult<()> {
         let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
         let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
@@ -333,6 +354,38 @@ impl Renderer {
         ];
         self.update_uniform_buffer(queue, &matrix);
 
+        self.vertex_buffers.clear();
+        self.index_buffers.clear();
+
+        for draw_list in draw_data.draw_lists() {
+            self.vertex_buffers
+                .push(self.upload_vertex_buffer(device, draw_list.vtx_buffer()));
+            self.index_buffers
+                .push(self.upload_index_buffer(device, draw_list.idx_buffer()));
+        }
+
+        Ok(())
+    }
+
+    /// Render the current imgui frame.
+    pub fn render<'r>(
+        &'r mut self,
+        draw_data: &DrawData,
+        device: &Device,
+        queue: &Queue,
+        encoder: &'r mut CommandEncoder,
+        view: &TextureView,
+    ) -> RendererResult<()> {
+        let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
+        let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
+
+        // If the render area is <= 0, exit here and now.
+        if !(fb_width > 0.0 && fb_height > 0.0) {
+            return Ok(());
+        }
+
+        self.prepare(device, queue, draw_data)?;
+
         // Start a new renderpass and prepare it properly.
         let mut rpass = encoder.begin_render_pass(&RenderPassDescriptor {
             color_attachments: &[RenderPassColorAttachmentDescriptor {
@@ -351,20 +404,41 @@ impl Renderer {
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
 
-        self.vertex_buffers.clear();
-        self.index_buffers.clear();
-
-        for draw_list in draw_data.draw_lists() {
-            self.vertex_buffers
-                .push(self.upload_vertex_buffer(device, draw_list.vtx_buffer()));
-            self.index_buffers
-                .push(self.upload_index_buffer(device, draw_list.idx_buffer()));
-        }
-
         // Execute all the imgui render work.
         for (draw_list_buffers_index, draw_list) in draw_data.draw_lists().enumerate() {
             self.render_draw_list(
                 &mut rpass,
+                &draw_list,
+                draw_data.display_pos,
+                draw_data.framebuffer_scale,
+                draw_list_buffers_index,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Render the current imgui frame.
+    pub fn render_to_pass<'r>(
+        &'r mut self,
+        draw_data: &DrawData,
+        rpass: &mut RenderPass<'r>,
+    ) -> RendererResult<()> {
+        let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
+        let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
+
+        // If the render area is <= 0, exit here and now.
+        if !(fb_width > 0.0 && fb_height > 0.0) {
+            return Ok(());
+        }
+
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
+
+        // Execute all the imgui render work.
+        for (draw_list_buffers_index, draw_list) in draw_data.draw_lists().enumerate() {
+            self.render_draw_list(
+                &mut *rpass,
                 &draw_list,
                 draw_data.display_pos,
                 draw_data.framebuffer_scale,
@@ -404,7 +478,7 @@ impl Renderer {
                     ];
 
                     // Set the current texture bind group on the renderpass.
-                    let texture_id = cmd_params.texture_id.into();
+                    let texture_id = cmd_params.texture_id;
                     let tex = self
                         .textures
                         .get(texture_id)
@@ -460,7 +534,7 @@ impl Renderer {
     /// Updates the texture on the GPU corresponding to the current imgui font atlas.
     ///
     /// This has to be called after loading a font.
-    pub fn reload_font_texture(&mut self, imgui: &mut Context, device: &Device, queue: &mut Queue) {
+    pub fn reload_font_texture(&mut self, imgui: &mut Context, device: &Device, queue: &Queue) {
         let mut atlas = imgui.fonts();
         let handle = atlas.build_rgba32_texture();
         let font_texture_id =
@@ -473,7 +547,7 @@ impl Renderer {
     pub fn upload_texture(
         &mut self,
         device: &Device,
-        queue: &mut Queue,
+        queue: &Queue,
         data: &[u8],
         width: u32,
         height: u32,

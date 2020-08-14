@@ -95,16 +95,18 @@ fn main() {
     let mut renderer = Renderer::new(
         &mut imgui,
         &device,
-        &mut queue,
+        &queue,
         sc_desc.format,
+        Some(wgpu::TextureFormat::Depth32Float),
         Some(clear_color),
+        1,
     );
 
     #[cfg(feature = "glsl-to-spirv")]
     let mut renderer = Renderer::new_glsl(
         &mut imgui,
         &device,
-        &mut queue,
+        &queue,
         sc_desc.format,
         Some(clear_color),
     );
@@ -215,7 +217,7 @@ fn main() {
                     platform.prepare_render(&ui, &window);
                 }
                 renderer
-                    .render(ui.render(), &mut device, &queue, &mut encoder, &frame.output.view)
+                    .render(ui.render(), &device, &queue, &mut encoder, &frame.output.view)
                     .expect("Rendering failed");
 
                 queue.submit(std::iter::once(encoder.finish()));

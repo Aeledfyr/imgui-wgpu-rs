@@ -17,6 +17,8 @@ fn main() {
     // Set up window and GPU
     let event_loop = EventLoop::new();
     let mut hidpi_factor = 1.0;
+    let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+
     let (window, mut size, surface) = {
         let version = env!("CARGO_PKG_VERSION");
 
@@ -28,26 +30,23 @@ fn main() {
         window.set_title(&format!("imgui-wgpu {}", version));
         let size = window.inner_size();
 
-        let surface = wgpu::Surface::create(&window);
+        let surface = unsafe {
+            instance.create_surface(&window)
+        };
 
         (window, size, surface)
     };
 
-    let adapter = block_on(wgpu::Adapter::request(
-        &wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-        },
-        wgpu::BackendBit::PRIMARY,
-    ))
-    .unwrap();
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+    })).unwrap();
 
     let (mut device, mut queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        extensions: wgpu::Extensions {
-            anisotropic_filtering: false,
-        },
+        features: wgpu::Features::empty(),
         limits: wgpu::Limits::default(),
-    }));
+        shader_validation: false,
+    }, None)).unwrap();
 
     // Set up swap chain
     let mut sc_desc = wgpu::SwapChainDescriptor {
@@ -96,7 +95,9 @@ fn main() {
         &device,
         &mut queue,
         sc_desc.format,
+        Some(wgpu::TextureFormat::Depth32Float),
         Some(clear_color),
+        1,
     );
 
     let mut last_frame = Instant::now();
@@ -167,7 +168,7 @@ fn main() {
             Event::RedrawEventsCleared => {
                 last_frame = imgui.io_mut().update_delta_time(last_frame);
 
-                let frame = match swap_chain.get_next_texture() {
+                let frame = match swap_chain.get_current_frame() {
                     Ok(frame) => frame,
                     Err(e) => {
                         eprintln!("dropped frame: {:?}", e);
@@ -199,10 +200,10 @@ fn main() {
                     platform.prepare_render(&ui, &window);
                 }
                 renderer
-                    .render(ui.render(), &mut device, &mut encoder, &frame.view)
+                    .render(ui.render(), &device, &queue, &mut encoder, &frame.output.view)
                     .expect("Rendering failed");
 
-                queue.submit(&[encoder.finish()]);
+                queue.submit(std::iter::once(encoder.finish()));
             }
             _ => (),
         }
